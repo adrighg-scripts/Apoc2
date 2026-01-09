@@ -1,0 +1,615 @@
+-- UI mit allen Features: ESP, Aim Assist, Limb Extender
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Rayfield UI laden
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+-- Messages für Loading Screen
+local Messages = {
+    "Aim Bot aktiviert 🎯",
+    "ESP Vision aktiv 👁️",
+    "Limb Extender geladen 🦵",
+    "Ultimate Cheat Suite ⚡",
+    "Bereit zum Dominieren 😈",
+    "Sichere dir den Sieg 🏆",
+    "Unschlagbar gemacht 💪",
+    "Cheat Engine geladen 🔧"
+}
+local ChosenMessage = Messages[math.random(1, #Messages)]
+
+-- Fenster erstellen
+local Window = Rayfield:CreateWindow({
+    Name = "Ultimate Cheat Suite",
+    Icon = 107904589783906,
+    LoadingTitle = "Ultimate Cheat Suite",
+    LoadingSubtitle = ChosenMessage,
+    Theme = "Default",
+    DisableRayfieldPrompts = true,
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "UltimateCheatConfigs",
+        FileName = "Configuration",
+    },
+})
+
+-- Tabs erstellen
+local AimTab = Window:CreateTab("Aim Assist", "target")
+local ESPTab = Window:CreateTab("ESP", "eye")
+local LimbTab = Window:CreateTab("Limb Extender", "scale-3d")
+local SettingsTab = Window:CreateTab("Einstellungen", "settings")
+
+-- Variablen
+local aimEnabled = false
+local aiming = false
+local aimConnection = nil
+local currentTarget = nil
+local lockedTarget = nil
+local lastAimUpdate = 0
+local AIM_UPDATE_INTERVAL = 0.03
+
+local mouse = LocalPlayer:GetMouse()
+
+-- Limb Extender initialisieren
+local le = loadstring(game:HttpGet('https://raw.githubusercontent.com/AAPVdev/scripts/refs/heads/main/LimbExtender.lua'))()
+local LimbExtender = le
+local limbExtenderInstance = LimbExtender({
+    LISTEN_FOR_INPUT = false,
+    USE_HIGHLIGHT = false,
+})
+
+-- ESP (Sense) laden
+local Sense = loadstring(game:HttpGet('https://sirius.menu/sense'))()
+Sense.teamSettings.enemy.enabled = true
+Sense.teamSettings.friendly.enabled = true
+
+-- Funktionen für ESP-Einstellungen
+local function setBoth(settingName, value)
+    if Sense and Sense.teamSettings then
+        Sense.teamSettings.enemy[settingName] = value
+        Sense.teamSettings.friendly[settingName] = value
+    end
+end
+
+-- AIM ASSIST FUNKTIONEN --
+function findNearestPlayer()
+    local closestPlayer = nil
+    local closestDistance = 100
+    local closestHead = nil
+    
+    local camera = workspace.CurrentCamera
+    local screenCenter = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+    
+    for _, otherPlayer in pairs(Players:GetPlayers()) do
+        if otherPlayer ~= LocalPlayer and otherPlayer.Character then
+            local humanoid = otherPlayer.Character:FindFirstChild("Humanoid")
+            local head = otherPlayer.Character:FindFirstChild("Head")
+            
+            if humanoid and humanoid.Health > 0 and head then
+                local screenPoint, visible = camera:WorldToScreenPoint(head.Position)
+                
+                if visible then
+                    local playerScreenPos = Vector2.new(screenPoint.X, screenPoint.Y)
+                    local distance = (playerScreenPos - screenCenter).Magnitude
+                    
+                    if distance <= closestDistance then
+                        closestDistance = distance
+                        closestPlayer = otherPlayer
+                        closestHead = head
+                    end
+                end
+            end
+        end
+    end
+    
+    return closestPlayer, closestHead
+end
+
+function permanentAim()
+    if not aiming then return end
+    
+    if lockedTarget and lockedTarget.Parent then
+        local humanoid = lockedTarget.Parent:FindFirstChild("Humanoid")
+        if humanoid and humanoid.Health > 0 then
+            currentTarget = lockedTarget
+        else
+            lockedTarget = nil
+            currentTarget = nil
+            return
+        end
+    elseif not currentTarget then
+        local targetPlayer, targetHead = findNearestPlayer()
+        if targetPlayer and targetHead then
+            currentTarget = targetHead
+            lockedTarget = targetHead
+        else
+            return
+        end
+    end
+    
+    if not currentTarget or not currentTarget.Parent then
+        currentTarget = nil
+        lockedTarget = nil
+        return
+    end
+    
+    local targetPlayer = Players:GetPlayerFromCharacter(currentTarget.Parent)
+    if not targetPlayer then
+        currentTarget = nil
+        lockedTarget = nil
+        return
+    end
+    
+    local humanoid = currentTarget.Parent:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then
+        currentTarget = nil
+        lockedTarget = nil
+        return
+    end
+    
+    local screenPoint = workspace.CurrentCamera:WorldToScreenPoint(currentTarget.Position)
+    local targetPos = Vector2.new(screenPoint.X, screenPoint.Y)
+    
+    local currentMousePos = Vector2.new(mouse.X, mouse.Y)
+    local direction = (targetPos - currentMousePos)
+    
+    local speed = Rayfield.Flags.AimSpeed and Rayfield.Flags.AimSpeed.CurrentValue or 0.3
+    local step = direction * speed
+    
+    pcall(function()
+        mousemoverel(step.X, step.Y)
+    end)
+end
+
+-- AIM ASSIST UI --
+local AimSection = AimTab:CreateSection("Aim Assist Einstellungen")
+
+local AimToggle = AimTab:CreateToggle({
+    Name = "Aim Assist aktivieren",
+    CurrentValue = false,
+    Flag = "AimToggle",
+    Callback = function(Value)
+        aimEnabled = Value
+        if not Value then
+            aiming = false
+            currentTarget = nil
+            lockedTarget = nil
+            if aimConnection then
+                aimConnection:Disconnect()
+                aimConnection = nil
+            end
+        end
+        print("Aim Assist: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local AimKeybind = AimTab:CreateKeybind({
+    Name = "Aim Keybind",
+    CurrentKeybind = "MouseButton2",
+    HoldToInteract = false,
+    Flag = "AimKey",
+    Callback = function(Key)
+        print("Aim Keybind geändert zu: " .. Key)
+    end
+})
+
+local LockToggle = AimTab:CreateToggle({
+    Name = "Target Lock (F5)",
+    CurrentValue = false,
+    Flag = "LockToggle",
+    Callback = function(Value)
+        print("Target Lock: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local AimSpeedSlider = AimTab:CreateSlider({
+    Name = "Aim Geschwindigkeit",
+    Range = {0.1, 1.0},
+    Increment = 0.05,
+    Suffix = "x",
+    CurrentValue = 0.3,
+    Flag = "AimSpeed",
+    Callback = function(Value)
+        print("Aim Geschwindigkeit: " .. Value)
+    end
+})
+
+local AimFOVSlider = AimTab:CreateSlider({
+    Name = "Aim FOV (Kreis)",
+    Range = {50, 300},
+    Increment = 10,
+    Suffix = "px",
+    CurrentValue = 100,
+    Flag = "AimFOV",
+    Callback = function(Value)
+        print("Aim FOV: " .. Value)
+    end
+})
+
+local TargetPartDropdown = AimTab:CreateDropdown({
+    Name = "Ziel Körperteil",
+    Options = {"Head", "HumanoidRootPart", "Torso"},
+    CurrentOption = {"Head"},
+    MultipleOptions = false,
+    Flag = "TargetPart",
+    Callback = function(Options)
+        print("Ziel Körperteil: " .. Options[1])
+    end
+})
+
+AimTab:CreateButton({
+    Name = "Aim Assist zurücksetzen",
+    Callback = function()
+        aimEnabled = false
+        aiming = false
+        currentTarget = nil
+        lockedTarget = nil
+        if aimConnection then
+            aimConnection:Disconnect()
+            aimConnection = nil
+        end
+        AimToggle:Set(false)
+        print("Aim Assist zurückgesetzt")
+    end
+})
+
+-- ESP UI --
+local ESPGeneralSection = ESPTab:CreateSection("Allgemeine ESP Einstellungen")
+
+local ESPEnemyToggle = ESPTab:CreateToggle({
+    Name = "Gegner ESP",
+    CurrentValue = true,
+    Flag = "ESPEnemy",
+    Callback = function(Value)
+        Sense.teamSettings.enemy.enabled = Value
+        print("Gegner ESP: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local ESPTeamToggle = ESPTab:CreateToggle({
+    Name = "Team ESP",
+    CurrentValue = false,
+    Flag = "ESPTeam",
+    Callback = function(Value)
+        Sense.teamSettings.friendly.enabled = Value
+        print("Team ESP: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local ESPBoxSection = ESPTab:CreateSection("Box ESP")
+
+local ESPBoxToggle = ESPTab:CreateToggle({
+    Name = "Box ESP",
+    CurrentValue = false,
+    Flag = "ESPBox",
+    Callback = function(Value)
+        setBoth("box", Value)
+        print("Box ESP: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local ESP3DBoxToggle = ESPTab:CreateToggle({
+    Name = "3D Box",
+    CurrentValue = false,
+    Flag = "ESP3DBox",
+    Callback = function(Value)
+        setBoth("box3d", Value)
+        print("3D Box: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local ESPNameSection = ESPTab:CreateSection("Name ESP")
+
+local ESPNameToggle = ESPTab:CreateToggle({
+    Name = "Namen anzeigen",
+    CurrentValue = false,
+    Flag = "ESPName",
+    Callback = function(Value)
+        setBoth("name", Value)
+        print("Namen ESP: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local ESPDistanceToggle = ESPTab:CreateToggle({
+    Name = "Distanz anzeigen",
+    CurrentValue = false,
+    Flag = "ESPDistance",
+    Callback = function(Value)
+        setBoth("distance", Value)
+        print("Distanz ESP: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local ESPHealthSection = ESPTab:CreateSection("Health ESP")
+
+local ESPHealthToggle = ESPTab:CreateToggle({
+    Name = "Health Bar",
+    CurrentValue = false,
+    Flag = "ESPHealthBar",
+    Callback = function(Value)
+        setBoth("healthBar", Value)
+        print("Health Bar: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local ESPHealthTextToggle = ESPTab:CreateToggle({
+    Name = "Health Text",
+    CurrentValue = false,
+    Flag = "ESPHealthText",
+    Callback = function(Value)
+        setBoth("healthText", Value)
+        print("Health Text: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+-- LIMB EXTENDER UI --
+local LimbMainSection = LimbTab:CreateSection("Limb Extender Haupt Einstellungen")
+
+local LimbModifyToggle = LimbTab:CreateToggle({
+    Name = "Limb Extender aktivieren",
+    CurrentValue = false,
+    Flag = "LimbModify",
+    Callback = function(Value)
+        limbExtenderInstance:Toggle(Value)
+        print("Limb Extender: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+LimbTab:CreateDivider()
+
+local LimbSizeSlider = LimbTab:CreateSlider({
+    Name = "Limb Größe",
+    Range = {5, 50},
+    Increment = 0.5,
+    Suffix = " Studs",
+    CurrentValue = 15,
+    Flag = "LimbSize",
+    Callback = function(Value)
+        limbExtenderInstance:Set("LIMB_SIZE", Value)
+        print("Limb Größe: " .. Value)
+    end
+})
+
+local LimbTransparencySlider = LimbTab:CreateSlider({
+    Name = "Limb Transparenz",
+    Range = {0, 1},
+    Increment = 0.1,
+    Suffix = "",
+    CurrentValue = 0.9,
+    Flag = "LimbTransparency",
+    Callback = function(Value)
+        limbExtenderInstance:Set("LIMB_TRANSPARENCY", Value)
+        print("Limb Transparenz: " .. Value)
+    end
+})
+
+local LimbTargetDropdown = LimbTab:CreateDropdown({
+    Name = "Ziel Körperteil",
+    Options = {},
+    CurrentOption = {"HumanoidRootPart"},
+    MultipleOptions = false,
+    Flag = "LimbTarget",
+    Callback = function(Options)
+        limbExtenderInstance:Set("TARGET_LIMB", Options[1])
+        print("Limb Ziel: " .. Options[1])
+    end
+})
+
+local LimbSettingsSection = LimbTab:CreateSection("Erweiterte Einstellungen")
+
+local LimbTeamCheckToggle = LimbTab:CreateToggle({
+    Name = "Team Check",
+    CurrentValue = true,
+    Flag = "LimbTeamCheck",
+    Callback = function(Value)
+        limbExtenderInstance:Set("TEAM_CHECK", Value)
+        print("Team Check: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local LimbCollisionToggle = LimbTab:CreateToggle({
+    Name = "Kollision aktivieren",
+    CurrentValue = false,
+    Flag = "LimbCollision",
+    Callback = function(Value)
+        limbExtenderInstance:Set("LIMB_CAN_COLLIDE", Value)
+        print("Limb Kollision: " .. (Value and "Aktiviert" or "Deaktiviert"))
+    end
+})
+
+local LimbToggleKeybind = LimbTab:CreateKeybind({
+    Name = "Limb Toggle Keybind",
+    CurrentKeybind = "L",
+    HoldToInteract = false,
+    Flag = "LimbToggleKey",
+    Callback = function(Key)
+        limbExtenderInstance:Set("TOGGLE", Key)
+        print("Limb Toggle Key: " .. Key)
+    end
+})
+
+-- EINSTELLUNGEN TAB --
+local UISettingsSection = SettingsTab:CreateSection("UI Einstellungen")
+
+local UIKeybind = SettingsTab:CreateKeybind({
+    Name = "UI Öffnen/Schließen",
+    CurrentKeybind = "RightControl",
+    HoldToInteract = false,
+    Flag = "UIKeybind",
+    Callback = function(Key)
+        print("UI Keybind geändert zu: " .. Key)
+    end
+})
+
+local ThemeDropdown = SettingsTab:CreateDropdown({
+    Name = "UI Theme",
+    Options = {"Default", "AmberGlow", "Amethyst", "Bloom", "DarkBlue", "Green", "Light", "Ocean", "Serenity"},
+    CurrentOption = {"Default"},
+    MultipleOptions = false,
+    Flag = "UITheme",
+    Callback = function(Options)
+        Window.ModifyTheme(Options[1])
+        print("Theme geändert zu: " .. Options[1])
+    end
+})
+
+local ConfigSection = SettingsTab:CreateSection("Konfiguration")
+
+SettingsTab:CreateButton({
+    Name = "Alle Einstellungen speichern",
+    Callback = function()
+        Rayfield:LoadConfiguration()
+        print("Einstellungen gespeichert!")
+    end
+})
+
+SettingsTab:CreateButton({
+    Name = "Alle Einstellungen laden",
+    Callback = function()
+        Rayfield:LoadConfiguration()
+        print("Einstellungen geladen!")
+    end
+})
+
+SettingsTab:CreateButton({
+    Name = "Alle Cheats zurücksetzen",
+    Callback = function()
+        -- Aim Assist zurücksetzen
+        aimEnabled = false
+        aiming = false
+        currentTarget = nil
+        lockedTarget = nil
+        if aimConnection then
+            aimConnection:Disconnect()
+            aimConnection = nil
+        end
+        
+        -- ESP zurücksetzen
+        if Sense then
+            Sense.teamSettings.enemy.enabled = false
+            Sense.teamSettings.friendly.enabled = false
+        end
+        
+        -- Limb Extender zurücksetzen
+        if limbExtenderInstance then
+            limbExtenderInstance:Toggle(false)
+        end
+        
+        print("Alle Cheats zurückgesetzt!")
+    end
+})
+
+-- INPUT HANDLER FÜR AIM ASSIST --
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    -- F5 für Target Lock
+    if input.KeyCode == Enum.KeyCode.F5 then
+        aimEnabled = not aimEnabled
+        if aimEnabled then
+            print("Aim Assist aktiviert - Permanente Fixierung")
+        else
+            print("Aim Assist deaktiviert")
+            aiming = false
+            currentTarget = nil
+            lockedTarget = nil
+            if aimConnection then
+                aimConnection:Disconnect()
+                aimConnection = nil
+            end
+        end
+    end
+    
+    -- F6 zum kompletten Abschalten
+    if input.KeyCode == Enum.KeyCode.F6 then
+        aimEnabled = false
+        aiming = false
+        currentTarget = nil
+        lockedTarget = nil
+        if aimConnection then
+            aimConnection:Disconnect()
+            aimConnection = nil
+        end
+        print("Aim Assist komplett geschlossen")
+    end
+    
+    -- Aim Assist mit Maus oder konfiguriertem Key
+    local aimKey = Rayfield.Flags.AimKey and Rayfield.Flags.AimKey.CurrentKeybind or "MouseButton2"
+    
+    if aimEnabled and 
+       ((input.UserInputType == Enum.UserInputType.MouseButton2 and aimKey == "MouseButton2") or
+        (input.KeyCode == Enum.KeyCode[aimKey] and aimKey ~= "MouseButton2")) then
+        aiming = true
+        if not lockedTarget then
+            local targetPlayer, targetHead = findNearestPlayer()
+            if targetHead then
+                lockedTarget = targetHead
+                currentTarget = targetHead
+            end
+        end
+        
+        if not aimConnection then
+            aimConnection = RunService.RenderStepped:Connect(permanentAim)
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    local aimKey = Rayfield.Flags.AimKey and Rayfield.Flags.AimKey.CurrentKeybind or "MouseButton2"
+    
+    if aimEnabled and 
+       ((input.UserInputType == Enum.UserInputType.MouseButton2 and aimKey == "MouseButton2") or
+        (input.KeyCode == Enum.KeyCode[aimKey] and aimKey ~= "MouseButton2")) then
+        aiming = false
+        lockedTarget = nil
+        currentTarget = nil
+        
+        if aimConnection then
+            aimConnection:Disconnect()
+            aimConnection = nil
+        end
+    end
+end)
+
+-- Limb Extender Körperteil Liste aktualisieren
+local function updateLimbList()
+    local limbs = {}
+    if LocalPlayer.Character then
+        for _, child in ipairs(LocalPlayer.Character:GetChildren()) do
+            if child:IsA("BasePart") then
+                table.insert(limbs, child.Name)
+            end
+        end
+        table.sort(limbs)
+        
+        -- Update Dropdown
+        if LimbTargetDropdown then
+            LimbTargetDropdown:Refresh(limbs)
+        end
+    end
+end
+
+-- Character hinzugefügt Event
+LocalPlayer.CharacterAdded:Connect(function(character)
+    updateLimbList()
+    character.ChildAdded:Connect(updateLimbList)
+end)
+
+if LocalPlayer.Character then
+    updateLimbList()
+end
+
+-- ESP initialisieren
+Sense.Load()
+
+-- Rayfield Konfiguration laden
+Rayfield:LoadConfiguration()
+
+-- UI laden abschließen
+print("Ultimate Cheat Suite erfolgreich geladen!")
+print("Drücke RightControl um die UI zu öffnen/schließen")
+print("Features: Aim Assist, ESP, Limb Extender")
