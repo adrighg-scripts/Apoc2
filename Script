@@ -39,7 +39,7 @@ local Window = Rayfield:CreateWindow({
 -- Create Tabs
 local AimTab = Window:CreateTab("Aim Assist", "target")
 local VisualsTab = Window:CreateTab("Visuals", "eye")
-local HeadTab = Window:CreateTab("Head Expander", "user")
+local PlayerTab = Window:CreateTab("Player", "user") -- Changed from HeadTab to PlayerTab
 local SettingsTab = Window:CreateTab("Settings", "settings")
 
 -- Variables for Aim Assist
@@ -54,6 +54,18 @@ local headExpanderEnabled = false
 local headExpanderConnection = nil
 local originalHeadSizes = {}
 local originalHeadCollisions = {}
+
+-- Infinite Jump Variables
+local infiniteJumpEnabled = false
+local infiniteJumpConnection = nil
+
+-- Walk Speed Variables
+local normalWalkSpeed = 16
+local sprintWalkSpeed = 35
+local currentWalkSpeed = 16
+local walkSpeedEnabled = false
+local walkSpeedConnection = nil
+local isSprinting = false
 
 -- Visuals/ESP Variables
 local playerEspEnabled = false
@@ -273,6 +285,85 @@ local function toggleHeadExpander(state)
         
         originalHeadSizes = {}
         originalHeadCollisions = {}
+    end
+end
+
+-- INFINITE JUMP FUNCTIONS --
+local function toggleInfiniteJump(state)
+    infiniteJumpEnabled = state
+    
+    if state then
+        infiniteJumpConnection = UserInputService.JumpRequest:Connect(function()
+            if LocalPlayer.Character then
+                local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    humanoid:ChangeState("Jumping")
+                end
+            end
+        end)
+    else
+        if infiniteJumpConnection then
+            infiniteJumpConnection:Disconnect()
+            infiniteJumpConnection = nil
+        end
+    end
+end
+
+-- WALK SPEED FUNCTIONS --
+local function updateWalkSpeed()
+    if not walkSpeedEnabled or not LocalPlayer.Character then return end
+    
+    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    -- Check if shift is pressed for sprinting
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
+        isSprinting = true
+        currentWalkSpeed = sprintWalkSpeed
+    else
+        isSprinting = false
+        currentWalkSpeed = normalWalkSpeed
+    end
+    
+    humanoid.WalkSpeed = currentWalkSpeed
+end
+
+local function toggleWalkSpeed(state)
+    walkSpeedEnabled = state
+    
+    if state then
+        -- Apply initial walk speed
+        if LocalPlayer.Character then
+            local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.WalkSpeed = currentWalkSpeed
+            end
+        end
+        
+        -- Connect to update walk speed
+        walkSpeedConnection = RunService.Heartbeat:Connect(updateWalkSpeed)
+        
+        -- Connect to character added
+        LocalPlayer.CharacterAdded:Connect(function(character)
+            task.wait(0.1)
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if humanoid and walkSpeedEnabled then
+                humanoid.WalkSpeed = currentWalkSpeed
+            end
+        end)
+    else
+        if walkSpeedConnection then
+            walkSpeedConnection:Disconnect()
+            walkSpeedConnection = nil
+        end
+        
+        -- Restore default walk speed
+        if LocalPlayer.Character then
+            local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.WalkSpeed = 16 -- Default Roblox walk speed
+            end
+        end
     end
 end
 
@@ -1019,7 +1110,7 @@ local VehicleMaxDistanceSlider = VisualsTab:CreateSlider({
     end
 })
 
-VisualsTab:CreateSection("Camera")
+VisualsTab:CreateSection("Camera (Not Working rn)")
 
 local CameraFOVSlider = VisualsTab:CreateSlider({
     Name = "Camera FOV",
@@ -1080,10 +1171,10 @@ VisualsTab:CreateButton({
     end
 })
 
--- HEAD EXPANDER UI --
-HeadTab:CreateSection("Head Expander Settings")
+-- PLAYER TAB (formerly Head Expander) --
+PlayerTab:CreateSection("Head Expander Settings (Not Working rn)")
 
-local HeadToggle = HeadTab:CreateToggle({
+local HeadToggle = PlayerTab:CreateToggle({
     Name = "Enable Head Expander",
     CurrentValue = false,
     Flag = "HeadToggle",
@@ -1092,7 +1183,7 @@ local HeadToggle = HeadTab:CreateToggle({
     end
 })
 
-local HeadKeybind = HeadTab:CreateKeybind({
+local HeadKeybind = PlayerTab:CreateKeybind({
     Name = "Head Expander Keybind",
     CurrentKeybind = "H",
     HoldToInteract = false,
@@ -1101,9 +1192,9 @@ local HeadKeybind = HeadTab:CreateKeybind({
     end
 })
 
-HeadTab:CreateDivider()
+PlayerTab:CreateDivider()
 
-local HeadSizeSlider = HeadTab:CreateSlider({
+local HeadSizeSlider = PlayerTab:CreateSlider({
     Name = "Head Size",
     Range = {2, 20},
     Increment = 0.5,
@@ -1117,13 +1208,101 @@ local HeadSizeSlider = HeadTab:CreateSlider({
     end
 })
 
-HeadTab:CreateDivider()
+PlayerTab:CreateDivider()
 
-HeadTab:CreateButton({
+-- INFINITE JUMP SECTION --
+PlayerTab:CreateSection("Infinite Jump (Not Working rn)")
+
+local InfiniteJumpToggle = PlayerTab:CreateToggle({
+    Name = "Enable Infinite Jump",
+    CurrentValue = false,
+    Flag = "InfiniteJumpToggle",
+    Callback = function(Value)
+        toggleInfiniteJump(Value)
+    end
+})
+
+local InfiniteJumpKeybind = PlayerTab:CreateKeybind({
+    Name = "Infinite Jump Keybind",
+    CurrentKeybind = "V",
+    HoldToInteract = false,
+    Flag = "InfiniteJumpKeybind",
+    Callback = function(Key)
+    end
+})
+
+PlayerTab:CreateDivider()
+
+-- WALK SPEED SECTION --
+PlayerTab:CreateSection("Walk Speed")
+
+local WalkSpeedToggle = PlayerTab:CreateToggle({
+    Name = "Enable Walk Speed",
+    CurrentValue = false,
+    Flag = "WalkSpeedToggle",
+    Callback = function(Value)
+        toggleWalkSpeed(Value)
+    end
+})
+
+local NormalWalkSpeedSlider = PlayerTab:CreateSlider({
+    Name = "Normal Walk Speed Recommend 22",
+    Range = {16, 35},
+    Increment = 1,
+    Suffix = " studs/sec",
+    CurrentValue = 16,
+    Flag = "NormalWalkSpeed",
+    Callback = function(Value)
+        normalWalkSpeed = Value
+        if not isSprinting and walkSpeedEnabled then
+            currentWalkSpeed = Value
+        end
+    end
+})
+
+local SprintWalkSpeedSlider = PlayerTab:CreateSlider({
+    Name = "Sprint Walk Speed Recommend 28",
+    Range = {25, 35},
+    Increment = 1,
+    Suffix = " studs/sec",
+    CurrentValue = 35,
+    Flag = "SprintWalkSpeed",
+    Callback = function(Value)
+        sprintWalkSpeed = Value
+        if isSprinting and walkSpeedEnabled then
+            currentWalkSpeed = Value
+        end
+    end
+})
+
+PlayerTab:CreateDivider()
+
+-- RESET BUTTONS --
+PlayerTab:CreateSection("Reset")
+
+PlayerTab:CreateButton({
     Name = "Reset Head Expander",
     Callback = function()
         toggleHeadExpander(false)
         HeadToggle:Set(false)
+    end
+})
+
+PlayerTab:CreateButton({
+    Name = "Reset Infinite Jump",
+    Callback = function()
+        toggleInfiniteJump(false)
+        InfiniteJumpToggle:Set(false)
+    end
+})
+
+PlayerTab:CreateButton({
+    Name = "Reset Walk Speed",
+    Callback = function()
+        toggleWalkSpeed(false)
+        WalkSpeedToggle:Set(false)
+        NormalWalkSpeedSlider:Set(16)
+        SprintWalkSpeedSlider:Set(35)
     end
 })
 
@@ -1179,6 +1358,9 @@ SettingsTab:CreateButton({
         headExpanderEnabled = false
         playerEspEnabled = false
         vehicleEspEnabled = false
+        infiniteJumpEnabled = false
+        walkSpeedEnabled = false
+        isSprinting = false
         
         if aimConnection then
             aimConnection:Disconnect()
@@ -1190,6 +1372,16 @@ SettingsTab:CreateButton({
             headExpanderConnection = nil
         end
         
+        if infiniteJumpConnection then
+            infiniteJumpConnection:Disconnect()
+            infiniteJumpConnection = nil
+        end
+        
+        if walkSpeedConnection then
+            walkSpeedConnection:Disconnect()
+            walkSpeedConnection = nil
+        end
+        
         if vehicleEspConnection then
             vehicleEspConnection:Disconnect()
             vehicleEspConnection = nil
@@ -1199,6 +1391,8 @@ SettingsTab:CreateButton({
         HeadToggle:Set(false)
         PlayerESPToggle:Set(false)
         VehicleESPToggle:Set(false)
+        InfiniteJumpToggle:Set(false)
+        WalkSpeedToggle:Set(false)
         
         cleanupPlayerVisuals()
         cleanupVehicleVisuals()
@@ -1222,6 +1416,14 @@ SettingsTab:CreateButton({
         
         if workspace.CurrentCamera then
             workspace.CurrentCamera.FieldOfView = 70
+        end
+        
+        -- Reset walk speed to default
+        if LocalPlayer.Character then
+            local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.WalkSpeed = 16
+            end
         end
         
         print("All cheats disabled")
@@ -1265,6 +1467,20 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         HeadToggle:Set(newState)
     end
     
+    -- Infinite Jump Toggle
+    if input.KeyCode == Enum.KeyCode.V then
+        local newState = not infiniteJumpEnabled
+        toggleInfiniteJump(newState)
+        InfiniteJumpToggle:Set(newState)
+    end
+    
+    -- Walk Speed Toggle
+    if input.KeyCode == Enum.KeyCode.B then
+        local newState = not walkSpeedEnabled
+        toggleWalkSpeed(newState)
+        WalkSpeedToggle:Set(newState)
+    end
+    
     -- Pause Visuals
     if input.KeyCode == Enum.KeyCode.F3 then
         PAUSED = not PAUSED
@@ -1291,6 +1507,9 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         headExpanderEnabled = false
         playerEspEnabled = false
         vehicleEspEnabled = false
+        infiniteJumpEnabled = false
+        walkSpeedEnabled = false
+        isSprinting = false
         PAUSED = false
         
         if aimConnection then
@@ -1303,6 +1522,16 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             headExpanderConnection = nil
         end
         
+        if infiniteJumpConnection then
+            infiniteJumpConnection:Disconnect()
+            infiniteJumpConnection = nil
+        end
+        
+        if walkSpeedConnection then
+            walkSpeedConnection:Disconnect()
+            walkSpeedConnection = nil
+        end
+        
         if vehicleEspConnection then
             vehicleEspConnection:Disconnect()
             vehicleEspConnection = nil
@@ -1312,6 +1541,8 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         HeadToggle:Set(false)
         PlayerESPToggle:Set(false)
         VehicleESPToggle:Set(false)
+        InfiniteJumpToggle:Set(false)
+        WalkSpeedToggle:Set(false)
         
         cleanupPlayerVisuals()
         cleanupVehicleVisuals()
@@ -1335,6 +1566,14 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         
         if workspace.CurrentCamera then
             workspace.CurrentCamera.FieldOfView = 70
+        end
+        
+        -- Reset walk speed to default
+        if LocalPlayer.Character then
+            local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.WalkSpeed = 16
+            end
         end
         
         print("All cheats disabled (F6)")
@@ -1411,11 +1650,19 @@ print("- RightControl: Toggle UI")
 print("- F5: Toggle Aim Assist")
 print("- F4: Toggle Player ESP")
 print("- H: Toggle Head Expander")
+print("- V: Toggle Infinite Jump")
+print("- B: Toggle Walk Speed")
 print("- F3: Pause All Visuals")
 print("- F6: Disable all cheats")
 print("- F8: Toggle X-Ray")
 print("- F9: Toggle Vehicle ESP")
 print("- Mouse 2: Aim (when Aim Assist enabled)")
+print("==========================================")
+print("Player Features:")
+print("- Head Expander with size slider")
+print("- Infinite Jump with keybind (V)")
+print("- Walk Speed (16-100) & Sprint Speed (25-150)")
+print("- Automatically switches to sprint when Shift is held")
 print("==========================================")
 print("Visuals Features:")
 print("- Player ESP with Highlight and Labels")
