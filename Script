@@ -1,4 +1,4 @@
-benutze das -- Ultimate Cheat Suite UI with Aim Assist, Visuals (ESP) and Head Expander
+-- Ultimate Cheat Suite UI with Aim Assist, Visuals (ESP) and Head Expander
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
@@ -48,8 +48,6 @@ local aiming = false
 local aimConnection = nil
 local currentTarget = nil
 local lockedTarget = nil
-local lastAimUpdate = 0
-local AIM_UPDATE_INTERVAL = 0.03
 
 -- Head Expander Variables
 local headExpanderEnabled = false
@@ -58,7 +56,8 @@ local originalHeadSizes = {}
 local originalHeadCollisions = {}
 
 -- Visuals/ESP Variables
-local visualsEnabled = false
+local playerEspEnabled = false
+local vehicleEspEnabled = false
 local STUD_TO_M = 0.28
 local PAUSED = false
 
@@ -67,11 +66,10 @@ local playerHighlights = {}
 local playerGuis = {}
 
 -- Vehicle ESP Variables
-local vehicleEspEnabled = false
 local vehicleEspConnection = nil
 local vehicleHighlights = {}
 local vehicleGuis = {}
-local MAX_VEHICLE_DISTANCE = 500  -- Default max distance in studs
+local MAX_VEHICLE_DISTANCE = 500
 
 -- X-RAY Variables
 local XRAY_ACTIVE = false
@@ -90,7 +88,7 @@ local function createFOVCircle()
     circle.Color = Color3.fromRGB(255, 255, 255)
     circle.Transparency = 0.7
     circle.Filled = false
-    circle.Radius = Rayfield.Flags.AimFOV and Rayfield.Flags.AimFOV.CurrentValue or 100
+    circle.Radius = 100
     
     ESPCircle = circle
     return circle
@@ -101,7 +99,7 @@ local function updateFOVCircle()
     
     local camera = workspace.CurrentCamera
     ESPCircle.Position = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
-    ESPCircle.Visible = Rayfield.Flags.ShowFOV and Rayfield.Flags.ShowFOV.CurrentValue and aimEnabled
+    ESPCircle.Visible = aimEnabled
     ESPCircle.Radius = Rayfield.Flags.AimFOV and Rayfield.Flags.AimFOV.CurrentValue or 100
 end
 
@@ -119,7 +117,6 @@ function findNearestPlayer()
             local humanoid = otherPlayer.Character:FindFirstChild("Humanoid")
             local targetPart = nil
             
-            -- Select target body part based on setting
             local targetPartName = Rayfield.Flags.TargetPart and Rayfield.Flags.TargetPart.CurrentOption[1] or "Head"
             if targetPartName == "Head" then
                 targetPart = otherPlayer.Character:FindFirstChild("Head")
@@ -212,15 +209,13 @@ local function expandHead(character, size)
     local head = character:FindFirstChild("Head")
     if not head then return end
     
-    -- Save original size if not saved yet
     if not originalHeadSizes[character] then
         originalHeadSizes[character] = head.Size
         originalHeadCollisions[character] = head.CanCollide
     end
     
-    -- Set new size
     head.Size = Vector3.new(size, size, size)
-    head.CanCollide = true -- ALWAYS collision enabled
+    head.CanCollide = true
 end
 
 local function restoreHead(character)
@@ -242,7 +237,6 @@ local function updateAllHeads()
     
     local headSize = Rayfield.Flags.HeadSize and Rayfield.Flags.HeadSize.CurrentValue or 5
     
-    -- Other players only (not yourself)
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             expandHead(player.Character, headSize)
@@ -254,13 +248,9 @@ local function toggleHeadExpander(state)
     headExpanderEnabled = state
     
     if state then
-        -- Activate
         updateAllHeads()
-        
-        -- Events for new players
         headExpanderConnection = RunService.Heartbeat:Connect(updateAllHeads)
         
-        -- Character Added Events
         for _, player in pairs(Players:GetPlayers()) do
             player.CharacterAdded:Connect(function(character)
                 task.wait(0.1)
@@ -270,20 +260,17 @@ local function toggleHeadExpander(state)
             end)
         end
     else
-        -- Deactivate
         if headExpanderConnection then
             headExpanderConnection:Disconnect()
             headExpanderConnection = nil
         end
         
-        -- Reset all heads
         for _, player in pairs(Players:GetPlayers()) do
             if player ~= LocalPlayer and player.Character then
                 restoreHead(player.Character)
             end
         end
         
-        -- Clear saved data
         originalHeadSizes = {}
         originalHeadCollisions = {}
     end
@@ -291,10 +278,8 @@ end
 
 -- VISUALS/ESP FUNCTIONS --
 local function getPlayerName(player)
-    -- Check leaderstats first
     if player:FindFirstChild("leaderstats") then
         local leaderstats = player.leaderstats
-        -- Check various possible stats
         if leaderstats:FindFirstChild("Name") then
             return leaderstats.Name.Value
         elseif leaderstats:FindFirstChild("Username") then
@@ -304,7 +289,6 @@ local function getPlayerName(player)
         end
     end
     
-    -- Check DisplayName
     local character = player.Character
     if character then
         local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -313,50 +297,78 @@ local function getPlayerName(player)
         end
     end
     
-    -- Fallback to player name
     return player.Name
 end
 
-local function addHighlight(object, name, color, transparency)
-    if not object or not object:IsDescendantOf(workspace) then return nil end
+-- Color and settings variables
+local PLAYER_ESP_COLOR = Color3.fromRGB(255, 255, 255)
+local PLAYER_FILL_TRANSPARENCY = 0.5
+local SHOW_PLAYER_NAMES = true
+local SHOW_PLAYER_DISTANCE = true
+local SHOW_VEHICLE_DISTANCE = true
+local VEHICLE_NAME_COLOR = Color3.fromRGB(0, 120, 255)
+
+local function addPlayerHighlight(char)
+    if not char or not char:IsDescendantOf(workspace) then return nil end
     
-    -- Remove old highlight if exists
-    if object:FindFirstChild("VisualsHighlight") then
-        object.VisualsHighlight:Destroy()
+    if char:FindFirstChild("PlayerHighlight") then
+        char.PlayerHighlight:Destroy()
     end
     
     local highlight = Instance.new("Highlight")
-    highlight.Name = "VisualsHighlight"
-    highlight.FillColor = color
-    highlight.OutlineColor = color
-    highlight.FillTransparency = transparency or 0.5
+    highlight.Name = "PlayerHighlight"
+    highlight.FillColor = PLAYER_ESP_COLOR
+    highlight.OutlineColor = PLAYER_ESP_COLOR
+    highlight.FillTransparency = PLAYER_FILL_TRANSPARENCY
     highlight.OutlineTransparency = 0
-    highlight.Parent = object
+    highlight.Parent = char
+    
+    return highlight
+end
+
+local function addVehicleHighlight(vehicle)
+    if not vehicle or not vehicle:IsDescendantOf(workspace) then return nil end
+    
+    if vehicle:FindFirstChild("VehicleHighlight") then
+        vehicle.VehicleHighlight:Destroy()
+    end
+    
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "VehicleHighlight"
+    highlight.FillColor = Color3.fromRGB(0, 255, 0)
+    highlight.OutlineColor = Color3.fromRGB(0, 255, 0)
+    highlight.FillTransparency = 0.3
+    highlight.OutlineTransparency = 0
+    highlight.Parent = vehicle
     
     return highlight
 end
 
 local function removeHighlight(object)
-    if object and object:FindFirstChild("VisualsHighlight") then
-        object.VisualsHighlight:Destroy()
+    if object and object:FindFirstChild("PlayerHighlight") then
+        object.PlayerHighlight:Destroy()
+    end
+    if object and object:FindFirstChild("VehicleHighlight") then
+        object.VehicleHighlight:Destroy()
     end
 end
 
-local function createLabel(object, name, distance, showName, showDistance)
-    if not object or not object:IsDescendantOf(workspace) then return nil end
+local function createPlayerLabel(char, player)
+    if not char or not char:FindFirstChild("Head") then return nil end
     
-    -- Remove old label if exists
-    if object:FindFirstChild("VisualsLabel") then
-        object.VisualsLabel:Destroy()
+    local head = char.Head
+    
+    if head:FindFirstChild("PlayerLabel") then
+        head.PlayerLabel:Destroy()
     end
     
     local billboard = Instance.new("BillboardGui")
-    billboard.Name = "VisualsLabel"
+    billboard.Name = "PlayerLabel"
     billboard.Size = UDim2.new(0, 200, 0, 25)
-    billboard.StudsOffset = Vector3.new(0, object:IsA("Model") and (object.PrimaryPart and object.PrimaryPart.Size.Y or 5) or object.Size.Y, 0)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
     billboard.AlwaysOnTop = true
-    billboard.Adornee = object
-    billboard.Parent = object
+    billboard.Adornee = head
+    billboard.Parent = head
 
     local container = Instance.new("Frame")
     container.Name = "Container"
@@ -384,8 +396,8 @@ local function createLabel(object, name, distance, showName, showDistance)
     nameText.TextScaled = false
     nameText.TextSize = 14
     nameText.Font = Enum.Font.GothamBold
-    nameText.Text = name or "Object"
-    nameText.Visible = showName
+    nameText.Text = getPlayerName(player)
+    nameText.Visible = SHOW_PLAYER_NAMES
     nameText.LayoutOrder = 1
     nameText.Parent = container
 
@@ -400,8 +412,76 @@ local function createLabel(object, name, distance, showName, showDistance)
     distanceText.TextScaled = false
     distanceText.TextSize = 16
     distanceText.Font = Enum.Font.GothamSemibold
-    distanceText.Text = distance or ""
-    distanceText.Visible = showDistance
+    distanceText.Text = ""
+    distanceText.Visible = SHOW_PLAYER_DISTANCE
+    distanceText.LayoutOrder = 2
+    distanceText.Parent = container
+
+    return billboard
+end
+
+local function createVehicleLabel(vehicle)
+    if not vehicle then return nil end
+    
+    local primaryPart = vehicle.PrimaryPart or vehicle:FindFirstChildWhichIsA("BasePart")
+    if not primaryPart then return nil end
+    
+    if primaryPart:FindFirstChild("VehicleLabel") then
+        primaryPart.VehicleLabel:Destroy()
+    end
+    
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "VehicleLabel"
+    billboard.Size = UDim2.new(0, 200, 0, 25)
+    billboard.StudsOffset = Vector3.new(0, primaryPart.Size.Y + 2, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Adornee = primaryPart
+    billboard.Parent = primaryPart
+
+    local container = Instance.new("Frame")
+    container.Name = "Container"
+    container.Size = UDim2.new(1, 0, 1, 0)
+    container.BackgroundTransparency = 1
+    container.Parent = billboard
+
+    local layout = Instance.new("UIListLayout")
+    layout.FillDirection = Enum.FillDirection.Horizontal
+    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    layout.VerticalAlignment = Enum.VerticalAlignment.Center
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 5)
+    layout.Parent = container
+
+    -- Name Label - BLUE for vehicles
+    local nameText = Instance.new("TextLabel")
+    nameText.Name = "NameText"
+    nameText.Size = UDim2.new(0, 0, 1, 0)
+    nameText.AutomaticSize = Enum.AutomaticSize.X
+    nameText.BackgroundTransparency = 1
+    nameText.TextColor3 = VEHICLE_NAME_COLOR -- BLUE
+    nameText.TextStrokeTransparency = 0.3
+    nameText.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    nameText.TextScaled = false
+    nameText.TextSize = 14
+    nameText.Font = Enum.Font.GothamBold
+    nameText.Text = vehicle.Name
+    nameText.Visible = true
+    nameText.LayoutOrder = 1
+    nameText.Parent = container
+
+    -- Distance Label
+    local distanceText = Instance.new("TextLabel")
+    distanceText.Name = "DistanceText"
+    distanceText.Size = UDim2.new(0, 0, 1, 0)
+    distanceText.AutomaticSize = Enum.AutomaticSize.X
+    distanceText.BackgroundTransparency = 1
+    distanceText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    distanceText.TextStrokeTransparency = 0.5
+    distanceText.TextScaled = false
+    distanceText.TextSize = 16
+    distanceText.Font = Enum.Font.GothamSemibold
+    distanceText.Text = ""
+    distanceText.Visible = SHOW_VEHICLE_DISTANCE
     distanceText.LayoutOrder = 2
     distanceText.Parent = container
 
@@ -409,8 +489,18 @@ local function createLabel(object, name, distance, showName, showDistance)
 end
 
 local function removeLabel(object)
-    if object and object:FindFirstChild("VisualsLabel") then
-        object.VisualsLabel:Destroy()
+    if object and object:FindFirstChild("Head") then
+        local head = object.Head
+        if head and head:FindFirstChild("PlayerLabel") then
+            head.PlayerLabel:Destroy()
+        end
+    end
+    
+    if object then
+        local primaryPart = object.PrimaryPart or object:FindFirstChildWhichIsA("BasePart")
+        if primaryPart and primaryPart:FindFirstChild("VehicleLabel") then
+            primaryPart.VehicleLabel:Destroy()
+        end
     end
 end
 
@@ -421,7 +511,6 @@ end
 
 local function toggleXRay()
     if not XRAY_ACTIVE then
-        -- Enable X-Ray
         affectedParts = {}
         local changedCount = 0
         local ignoredCount = 0
@@ -449,9 +538,8 @@ local function toggleXRay()
         end
         
         XRAY_ACTIVE = true
-        print(string.format("X-Ray ENABLED: %d parts changed, %d parts ignored (Transparency >= 0.8)", changedCount, ignoredCount))
+        print(string.format("X-Ray ENABLED: %d parts changed, %d parts ignored", changedCount, ignoredCount))
     else
-        -- Disable X-Ray
         local restoredCount = 0
         for part, transparency in pairs(affectedParts) do
             if part and part.Parent then
@@ -467,8 +555,15 @@ local function toggleXRay()
 end
 
 -- Update Player Visuals
+local lastPlayerUpdate = 0
+local PLAYER_UPDATE_INTERVAL = 0.2
+
 local function updatePlayerVisuals()
-    if PAUSED or not visualsEnabled then return end
+    if PAUSED or not playerEspEnabled then return end
+    
+    local currentTime = tick()
+    if currentTime - lastPlayerUpdate < PLAYER_UPDATE_INTERVAL then return end
+    lastPlayerUpdate = currentTime
     
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
@@ -477,43 +572,51 @@ local function updatePlayerVisuals()
                 local root = char:FindFirstChild("HumanoidRootPart")
                 if root then
                     local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                    local shouldShow = Rayfield.Flags.PlayerESP and Rayfield.Flags.PlayerESP.CurrentValue
                     
-                    if shouldShow then
-                        -- Add highlight
-                        local color = Rayfield.Flags.ESPColor and Rayfield.Flags.ESPColor.CurrentValue or Color3.fromRGB(255, 255, 255)
-                        local transparency = Rayfield.Flags.ESPFillTransparency and Rayfield.Flags.ESPFillTransparency.CurrentValue or 0.5
-                        
-                        playerHighlights[player] = addHighlight(char, "PlayerHighlight", color, transparency)
-                        
-                        -- Add label
-                        local showName = Rayfield.Flags.PlayerName and Rayfield.Flags.PlayerName.CurrentValue
-                        local showDistance = Rayfield.Flags.PlayerDistance and Rayfield.Flags.PlayerDistance.CurrentValue
-                        
-                        if showName or showDistance then
-                            local playerName = getPlayerName(player)
-                            local distanceText = ""
-                            
-                            if showDistance and myRoot then
-                                local distStuds = (myRoot.Position - root.Position).Magnitude
-                                local distMeters = distStuds * STUD_TO_M
-                                distanceText = string.format("%.1f m", distMeters)
-                            end
-                            
-                            playerGuis[player] = createLabel(char, playerName, distanceText, showName, showDistance)
-                        else
-                            removeLabel(char)
-                        end
+                    -- Update or create highlight
+                    local highlight = char:FindFirstChild("PlayerHighlight")
+                    if not highlight then
+                        highlight = addPlayerHighlight(char)
+                        playerHighlights[player] = highlight
                     else
-                        removeHighlight(char)
-                        removeLabel(char)
+                        -- Update highlight color and transparency
+                        highlight.FillColor = PLAYER_ESP_COLOR
+                        highlight.OutlineColor = PLAYER_ESP_COLOR
+                        highlight.FillTransparency = PLAYER_FILL_TRANSPARENCY
+                    end
+                    
+                    -- Update or create label
+                    local label = char:FindFirstChild("Head") and char.Head:FindFirstChild("PlayerLabel")
+                    if not label then
+                        label = createPlayerLabel(char, player)
+                        playerGuis[player] = label
+                    else
+                        -- Update label visibility
+                        local container = label:FindFirstChild("Container")
+                        if container then
+                            local nameText = container:FindFirstChild("NameText")
+                            local distanceText = container:FindFirstChild("DistanceText")
+                            
+                            if nameText then
+                                nameText.Visible = SHOW_PLAYER_NAMES
+                            end
+                            if distanceText then
+                                distanceText.Visible = SHOW_PLAYER_DISTANCE
+                                if SHOW_PLAYER_DISTANCE and myRoot then
+                                    local distStuds = (myRoot.Position - root.Position).Magnitude
+                                    local distMeters = distStuds * STUD_TO_M
+                                    distanceText.Text = string.format("%.1f m", distMeters)
+                                else
+                                    distanceText.Text = ""
+                                end
+                            end
+                        end
                     end
                 else
                     removeHighlight(char)
                     removeLabel(char)
                 end
             else
-                -- Character doesn't exist, clean up
                 if playerHighlights[player] then
                     removeHighlight(playerHighlights[player].Parent)
                     playerHighlights[player] = nil
@@ -528,13 +631,71 @@ local function updatePlayerVisuals()
 end
 
 -- Update Vehicle ESP
+local lastVehicleUpdate = 0
+local VEHICLE_UPDATE_INTERVAL = 0.3
+
 local function updateVehicleESP()
     if PAUSED or not vehicleEspEnabled then return end
+    
+    local currentTime = tick()
+    if currentTime - lastVehicleUpdate < VEHICLE_UPDATE_INTERVAL then return end
+    lastVehicleUpdate = currentTime
     
     local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not myRoot then return end
     
-    -- Clean up old vehicles that no longer exist
+    if not workspace:FindFirstChild("Vehicles") then
+        return
+    end
+    
+    local maxDistance = MAX_VEHICLE_DISTANCE
+    
+    for _, vehicle in pairs(workspace.Vehicles:GetChildren()) do
+        if vehicle:IsA("Model") then
+            local primaryPart = vehicle.PrimaryPart or vehicle:FindFirstChildWhichIsA("BasePart")
+            if primaryPart then
+                local distance = (myRoot.Position - primaryPart.Position).Magnitude
+                
+                if distance <= maxDistance then
+                    -- Update or create highlight
+                    local highlight = vehicle:FindFirstChild("VehicleHighlight")
+                    if not highlight then
+                        highlight = addVehicleHighlight(vehicle)
+                        vehicleHighlights[vehicle.Name] = highlight
+                    end
+                    
+                    -- Update or create label
+                    local label = (primaryPart:FindFirstChild("VehicleLabel") or vehicle:FindFirstChild("VehicleLabel"))
+                    if not label then
+                        label = createVehicleLabel(vehicle)
+                        vehicleGuis[vehicle.Name] = label
+                    else
+                        -- Update distance text visibility
+                        local container = label:FindFirstChild("Container")
+                        if container then
+                            local distanceText = container:FindFirstChild("DistanceText")
+                            if distanceText then
+                                distanceText.Visible = SHOW_VEHICLE_DISTANCE
+                                if SHOW_VEHICLE_DISTANCE then
+                                    local distMeters = distance * STUD_TO_M
+                                    distanceText.Text = string.format("%.1f m", distMeters)
+                                else
+                                    distanceText.Text = ""
+                                end
+                            end
+                        end
+                    end
+                else
+                    removeHighlight(vehicle)
+                    removeLabel(vehicle)
+                    vehicleHighlights[vehicle.Name] = nil
+                    vehicleGuis[vehicle.Name] = nil
+                end
+            end
+        end
+    end
+    
+    -- Clean up old vehicles
     for vehicleName, _ in pairs(vehicleHighlights) do
         if not workspace.Vehicles:FindFirstChild(vehicleName) then
             local vehicle = workspace.Vehicles[vehicleName]
@@ -546,48 +707,6 @@ local function updateVehicleESP()
             vehicleGuis[vehicleName] = nil
         end
     end
-    
-    -- Check if Vehicles folder exists
-    if not workspace:FindFirstChild("Vehicles") then
-        return
-    end
-    
-    -- Check all vehicles in workspace.Vehicles
-    for _, vehicle in pairs(workspace.Vehicles:GetChildren()) do
-        if vehicle:IsA("Model") then
-            local primaryPart = vehicle.PrimaryPart or vehicle:FindFirstChildWhichIsA("BasePart")
-            if primaryPart then
-                local distance = (myRoot.Position - primaryPart.Position).Magnitude
-                local maxDistance = Rayfield.Flags.VehicleMaxDistance and Rayfield.Flags.VehicleMaxDistance.CurrentValue or MAX_VEHICLE_DISTANCE
-                
-                if distance <= maxDistance then
-                    -- Add highlight
-                    local color = Rayfield.Flags.VehicleColor and Rayfield.Flags.VehicleColor.CurrentValue or Color3.fromRGB(0, 255, 0)
-                    vehicleHighlights[vehicle.Name] = addHighlight(vehicle, "VehicleHighlight", color, 0.3)
-                    
-                    -- Add label
-                    local showName = true  -- Always show name for vehicles
-                    local showDistance = Rayfield.Flags.VehicleDistance and Rayfield.Flags.VehicleDistance.CurrentValue
-                    
-                    local vehicleName = vehicle.Name
-                    local distanceText = ""
-                    
-                    if showDistance then
-                        local distMeters = distance * STUD_TO_M
-                        distanceText = string.format("%.1f m", distMeters)
-                    end
-                    
-                    vehicleGuis[vehicle.Name] = createLabel(vehicle, vehicleName, distanceText, showName, showDistance)
-                else
-                    -- Too far away, remove visuals
-                    removeHighlight(vehicle)
-                    removeLabel(vehicle)
-                    vehicleHighlights[vehicle.Name] = nil
-                    vehicleGuis[vehicle.Name] = nil
-                end
-            end
-        end
-    end
 end
 
 local function setupPlayer(player)
@@ -596,17 +715,11 @@ local function setupPlayer(player)
             task.wait(1)
             updatePlayerVisuals()
         end)
-        
-        if player.Character then
-            task.wait(1)
-            updatePlayerVisuals()
-        end
     end
 end
 
 -- Cleanup functions
-local function cleanupVisuals()
-    -- Clean up player visuals
+local function cleanupPlayerVisuals()
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             removeHighlight(player.Character)
@@ -615,8 +728,9 @@ local function cleanupVisuals()
     end
     playerHighlights = {}
     playerGuis = {}
-    
-    -- Clean up vehicle visuals
+end
+
+local function cleanupVehicleVisuals()
     if workspace:FindFirstChild("Vehicles") then
         for _, vehicle in pairs(workspace.Vehicles:GetChildren()) do
             removeHighlight(vehicle)
@@ -625,6 +739,17 @@ local function cleanupVisuals()
     end
     vehicleHighlights = {}
     vehicleGuis = {}
+end
+
+-- Toggle Player ESP
+local function togglePlayerESP(state)
+    playerEspEnabled = state
+    
+    if state then
+        updatePlayerVisuals()
+    else
+        cleanupPlayerVisuals()
+    end
 end
 
 -- Toggle Vehicle ESP
@@ -642,15 +767,7 @@ local function toggleVehicleESP(state)
             vehicleEspConnection = nil
         end
         
-        -- Clean up vehicle visuals
-        if workspace:FindFirstChild("Vehicles") then
-            for _, vehicle in pairs(workspace.Vehicles:GetChildren()) do
-                removeHighlight(vehicle)
-                removeLabel(vehicle)
-            end
-        end
-        vehicleHighlights = {}
-        vehicleGuis = {}
+        cleanupVehicleVisuals()
     end
 end
 
@@ -739,6 +856,7 @@ local AimFOVSlider = AimTab:CreateSlider({
         if ESPCircle then
             ESPCircle.Radius = Value
         end
+        updateFOVCircle()
     end
 })
 
@@ -784,43 +902,23 @@ AimTab:CreateButton({
 })
 
 -- VISUALS/ESP UI --
-VisualsTab:CreateSection("Visuals Settings")
-
-local VisualsToggle = VisualsTab:CreateToggle({
-    Name = "Enable Visuals",
-    CurrentValue = false,
-    Flag = "VisualsToggle",
-    Callback = function(Value)
-        visualsEnabled = Value
-        if not Value then
-            cleanupVisuals()
-        else
-            updatePlayerVisuals()
-        end
-    end
-})
-
-local VisualsKeybind = VisualsTab:CreateKeybind({
-    Name = "Visuals Toggle Keybind",
-    CurrentKeybind = "F4",
-    HoldToInteract = false,
-    Flag = "VisualsKeybind",
-    Callback = function(Key)
-    end
-})
-
-VisualsTab:CreateDivider()
-
 VisualsTab:CreateSection("Player ESP")
 
 local PlayerESPToggle = VisualsTab:CreateToggle({
     Name = "Player ESP",
-    CurrentValue = true,
+    CurrentValue = false,
     Flag = "PlayerESP",
     Callback = function(Value)
-        if visualsEnabled then
-            updatePlayerVisuals()
-        end
+        togglePlayerESP(Value)
+    end
+})
+
+local PlayerESPKeybind = VisualsTab:CreateKeybind({
+    Name = "Player ESP Keybind",
+    CurrentKeybind = "F4",
+    HoldToInteract = false,
+    Flag = "PlayerESPKeybind",
+    Callback = function(Key)
     end
 })
 
@@ -829,7 +927,8 @@ local PlayerNameToggle = VisualsTab:CreateToggle({
     CurrentValue = true,
     Flag = "PlayerName",
     Callback = function(Value)
-        if visualsEnabled then
+        SHOW_PLAYER_NAMES = Value
+        if playerEspEnabled then
             updatePlayerVisuals()
         end
     end
@@ -840,7 +939,34 @@ local PlayerDistanceToggle = VisualsTab:CreateToggle({
     CurrentValue = true,
     Flag = "PlayerDistance",
     Callback = function(Value)
-        if visualsEnabled then
+        SHOW_PLAYER_DISTANCE = Value
+        if playerEspEnabled then
+            updatePlayerVisuals()
+        end
+    end
+})
+
+local PlayerFillTransparencySlider = VisualsTab:CreateSlider({
+    Name = "Player Fill Transparency",
+    Range = {0, 1},
+    Increment = 0.05,
+    CurrentValue = 0.5,
+    Flag = "PlayerFillTransparency",
+    Callback = function(Value)
+        PLAYER_FILL_TRANSPARENCY = Value
+        if playerEspEnabled then
+            updatePlayerVisuals()
+        end
+    end
+})
+
+local PlayerESPColorPicker = VisualsTab:CreateColorPicker({
+    Name = "Player ESP Color",
+    Color = Color3.fromRGB(255, 255, 255),
+    Flag = "PlayerESPColor",
+    Callback = function(Value)
+        PLAYER_ESP_COLOR = Value
+        if playerEspEnabled then
             updatePlayerVisuals()
         end
     end
@@ -871,6 +997,7 @@ local VehicleDistanceToggle = VisualsTab:CreateToggle({
     CurrentValue = true,
     Flag = "VehicleDistance",
     Callback = function(Value)
+        SHOW_VEHICLE_DISTANCE = Value
         if vehicleEspEnabled then
             updateVehicleESP()
         end
@@ -886,43 +1013,6 @@ local VehicleMaxDistanceSlider = VisualsTab:CreateSlider({
     Flag = "VehicleMaxDistance",
     Callback = function(Value)
         MAX_VEHICLE_DISTANCE = Value
-        if vehicleEspEnabled then
-            updateVehicleESP()
-        end
-    end
-})
-
-VisualsTab:CreateSection("Appearance")
-
-local ESPFillTransparencySlider = VisualsTab:CreateSlider({
-    Name = "Fill Transparency",
-    Range = {0, 1},
-    Increment = 0.05,
-    CurrentValue = 0.5,
-    Flag = "ESPFillTransparency",
-    Callback = function(Value)
-        if visualsEnabled then
-            updatePlayerVisuals()
-        end
-    end
-})
-
-local ESPColorPicker = VisualsTab:CreateColorPicker({
-    Name = "Player ESP Color",
-    Color = Color3.fromRGB(255, 255, 255),
-    Flag = "ESPColor",
-    Callback = function(Value)
-        if visualsEnabled then
-            updatePlayerVisuals()
-        end
-    end
-})
-
-local VehicleColorPicker = VisualsTab:CreateColorPicker({
-    Name = "Vehicle ESP Color",
-    Color = Color3.fromRGB(0, 255, 0),
-    Flag = "VehicleColor",
-    Callback = function(Value)
         if vehicleEspEnabled then
             updateVehicleESP()
         end
@@ -945,8 +1035,6 @@ local CameraFOVSlider = VisualsTab:CreateSlider({
     end
 })
 
-VisualsTab:CreateDivider()
-
 VisualsTab:CreateSection("X-Ray")
 
 local XRayKeybind = VisualsTab:CreateKeybind({
@@ -967,7 +1055,6 @@ local XRayTransparencySlider = VisualsTab:CreateSlider({
     Callback = function(Value)
         TARGET_TRANSPARENCY = Value
         if XRAY_ACTIVE then
-            -- Update all affected parts
             for part, _ in pairs(affectedParts) do
                 if part and part.Parent then
                     part.Transparency = Value
@@ -982,12 +1069,11 @@ VisualsTab:CreateDivider()
 VisualsTab:CreateButton({
     Name = "Reset Visuals",
     Callback = function()
-        cleanupVisuals()
-        VisualsToggle:Set(false)
-        VehicleESPToggle:Set(false)
+        togglePlayerESP(false)
         toggleVehicleESP(false)
+        PlayerESPToggle:Set(false)
+        VehicleESPToggle:Set(false)
         
-        -- Reset camera FOV
         if workspace.CurrentCamera then
             workspace.CurrentCamera.FieldOfView = 70
         end
@@ -1086,16 +1172,14 @@ SettingsTab:CreateDivider()
 SettingsTab:CreateButton({
     Name = "Disable All Cheats",
     Callback = function()
-        -- Reset all variables
         aimEnabled = false
         aiming = false
         currentTarget = nil
         lockedTarget = nil
         headExpanderEnabled = false
-        visualsEnabled = false
+        playerEspEnabled = false
         vehicleEspEnabled = false
         
-        -- Disconnect connections
         if aimConnection then
             aimConnection:Disconnect()
             aimConnection = nil
@@ -1111,37 +1195,31 @@ SettingsTab:CreateButton({
             vehicleEspConnection = nil
         end
         
-        -- Reset UI toggles
         AimToggle:Set(false)
         HeadToggle:Set(false)
-        VisualsToggle:Set(false)
+        PlayerESPToggle:Set(false)
         VehicleESPToggle:Set(false)
         
-        -- Clean up visuals
-        cleanupVisuals()
+        cleanupPlayerVisuals()
+        cleanupVehicleVisuals()
         
-        -- Reset Head Expander heads
         for _, player in pairs(Players:GetPlayers()) do
             if player ~= LocalPlayer and player.Character then
                 restoreHead(player.Character)
             end
         end
         
-        -- Clear saved data
         originalHeadSizes = {}
         originalHeadCollisions = {}
         
-        -- Hide FOV Circle
         if ESPCircle then
             ESPCircle.Visible = false
         end
         
-        -- Reset X-Ray
         if XRAY_ACTIVE then
             toggleXRay()
         end
         
-        -- Reset camera FOV
         if workspace.CurrentCamera then
             workspace.CurrentCamera.FieldOfView = 70
         end
@@ -1157,53 +1235,44 @@ SettingsTab:CreateButton({
     end
 })
 
--- INPUT HANDLER FOR ALL FEATURES --
+-- INPUT HANDLER --
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     
     -- UI Toggle
-    local uiKey = Rayfield.Flags.UIKeybind and Rayfield.Flags.UIKeybind.CurrentKeybind or "RightControl"
-    if input.KeyCode == Enum.KeyCode[uiKey] then
+    if input.KeyCode == Enum.KeyCode.RightControl then
         Rayfield:SetVisibility(not Rayfield:IsVisible())
     end
     
     -- Aim Assist Toggle
-    local aimToggleKey = Rayfield.Flags.AimToggleKey and Rayfield.Flags.AimToggleKey.CurrentKeybind or "F5"
-    if input.KeyCode == Enum.KeyCode[aimToggleKey] then
+    if input.KeyCode == Enum.KeyCode.F5 then
         aimEnabled = not aimEnabled
         AimToggle:Set(aimEnabled)
         updateFOVCircle()
     end
     
-    -- Visuals Toggle
-    local visualsKey = Rayfield.Flags.VisualsKeybind and Rayfield.Flags.VisualsKeybind.CurrentKeybind or "F4"
-    if input.KeyCode == Enum.KeyCode[visualsKey] then
-        visualsEnabled = not visualsEnabled
-        VisualsToggle:Set(visualsEnabled)
-        if not visualsEnabled then
-            cleanupVisuals()
-        else
-            updatePlayerVisuals()
-        end
+    -- Player ESP Toggle
+    if input.KeyCode == Enum.KeyCode.F4 then
+        local newState = not playerEspEnabled
+        togglePlayerESP(newState)
+        PlayerESPToggle:Set(newState)
     end
     
     -- Head Expander Toggle
-    local headKey = Rayfield.Flags.HeadKeybind and Rayfield.Flags.HeadKeybind.CurrentKeybind or "H"
-    if input.KeyCode == Enum.KeyCode[headKey] then
-        headExpanderEnabled = not headExpanderEnabled
-        toggleHeadExpander(headExpanderEnabled)
-        HeadToggle:Set(headExpanderEnabled)
+    if input.KeyCode == Enum.KeyCode.H then
+        local newState = not headExpanderEnabled
+        toggleHeadExpander(newState)
+        HeadToggle:Set(newState)
     end
     
-    -- F3 for Pause Visuals
+    -- Pause Visuals
     if input.KeyCode == Enum.KeyCode.F3 then
         PAUSED = not PAUSED
         if PAUSED then
-            -- Hide all visuals
-            cleanupVisuals()
+            cleanupPlayerVisuals()
+            cleanupVehicleVisuals()
         else
-            -- Show visuals
-            if visualsEnabled then
+            if playerEspEnabled then
                 updatePlayerVisuals()
             end
             if vehicleEspEnabled then
@@ -1213,19 +1282,17 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         print("Visuals Pause: " .. (PAUSED and "ON" or "OFF"))
     end
     
-    -- F6 to disable ALL cheats
+    -- Disable All Cheats
     if input.KeyCode == Enum.KeyCode.F6 then
-        -- Reset all variables
         aimEnabled = false
         aiming = false
         currentTarget = nil
         lockedTarget = nil
         headExpanderEnabled = false
-        visualsEnabled = false
+        playerEspEnabled = false
         vehicleEspEnabled = false
         PAUSED = false
         
-        -- Disconnect connections
         if aimConnection then
             aimConnection:Disconnect()
             aimConnection = nil
@@ -1241,37 +1308,31 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             vehicleEspConnection = nil
         end
         
-        -- Reset UI toggles
         AimToggle:Set(false)
         HeadToggle:Set(false)
-        VisualsToggle:Set(false)
+        PlayerESPToggle:Set(false)
         VehicleESPToggle:Set(false)
         
-        -- Clean up visuals
-        cleanupVisuals()
+        cleanupPlayerVisuals()
+        cleanupVehicleVisuals()
         
-        -- Reset Head Expander heads
         for _, player in pairs(Players:GetPlayers()) do
             if player ~= LocalPlayer and player.Character then
                 restoreHead(player.Character)
             end
         end
         
-        -- Clear saved data
         originalHeadSizes = {}
         originalHeadCollisions = {}
         
-        -- Hide FOV Circle
         if ESPCircle then
             ESPCircle.Visible = false
         end
         
-        -- Reset X-Ray
         if XRAY_ACTIVE then
             toggleXRay()
         end
         
-        -- Reset camera FOV
         if workspace.CurrentCamera then
             workspace.CurrentCamera.FieldOfView = 70
         end
@@ -1280,26 +1341,19 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
     
     -- X-Ray Toggle
-    local xrayKey = Rayfield.Flags.XRayKeybind and Rayfield.Flags.XRayKeybind.CurrentKeybind or "F8"
-    if input.KeyCode == Enum.KeyCode[xrayKey] then
+    if input.KeyCode == Enum.KeyCode.F8 then
         toggleXRay()
     end
     
     -- Vehicle ESP Toggle
-    local vehicleKey = Rayfield.Flags.VehicleKeybind and Rayfield.Flags.VehicleKeybind.CurrentKeybind or "F9"
-    if input.KeyCode == Enum.KeyCode[vehicleKey] then
+    if input.KeyCode == Enum.KeyCode.F9 then
         local newState = not vehicleEspEnabled
         toggleVehicleESP(newState)
         VehicleESPToggle:Set(newState)
-        print("Vehicle ESP: " .. (newState and "ON" or "OFF"))
     end
     
     -- Aim Assist activation
-    local aimKey = Rayfield.Flags.AimKey and Rayfield.Flags.AimKey.CurrentKeybind or "MouseButton2"
-    
-    if aimEnabled and 
-       ((input.UserInputType == Enum.UserInputType.MouseButton2 and aimKey == "MouseButton2") or
-        (input.KeyCode == Enum.KeyCode[aimKey] and aimKey ~= "MouseButton2")) then
+    if aimEnabled and input.UserInputType == Enum.UserInputType.MouseButton2 then
         aiming = true
         if not lockedTarget then
             local targetPlayer, targetHead = findNearestPlayer()
@@ -1318,11 +1372,7 @@ end)
 UserInputService.InputEnded:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     
-    local aimKey = Rayfield.Flags.AimKey and Rayfield.Flags.AimKey.CurrentKeybind or "MouseButton2"
-    
-    if aimEnabled and 
-       ((input.UserInputType == Enum.UserInputType.MouseButton2 and aimKey == "MouseButton2") or
-        (input.KeyCode == Enum.KeyCode[aimKey] and aimKey ~= "MouseButton2")) then
+    if aimEnabled and input.UserInputType == Enum.UserInputType.MouseButton2 then
         aiming = false
         lockedTarget = nil
         currentTarget = nil
@@ -1337,17 +1387,15 @@ end)
 -- Create FOV Circle
 createFOVCircle()
 
--- Visuals Update Loop
-local visualsUpdateConnection
-visualsUpdateConnection = RunService.Heartbeat:Connect(function()
+-- Player ESP Update Loop
+local playerEspUpdateConnection
+playerEspUpdateConnection = RunService.Heartbeat:Connect(function()
     if PAUSED then return end
     
-    -- Update Player Visuals
-    if visualsEnabled then
+    if playerEspEnabled then
         updatePlayerVisuals()
     end
     
-    -- Update FOV Circle
     updateFOVCircle()
 end)
 
@@ -1361,19 +1409,18 @@ print("==========================================")
 print("Controls:")
 print("- RightControl: Toggle UI")
 print("- F5: Toggle Aim Assist")
-print("- F4: Toggle Visuals/ESP")
+print("- F4: Toggle Player ESP")
 print("- H: Toggle Head Expander")
 print("- F3: Pause All Visuals")
 print("- F6: Disable all cheats")
-print("- F8: Toggle X-Ray (configurable)")
+print("- F8: Toggle X-Ray")
 print("- F9: Toggle Vehicle ESP")
 print("- Mouse 2: Aim (when Aim Assist enabled)")
 print("==========================================")
 print("Visuals Features:")
 print("- Player ESP with Highlight and Labels")
-print("- Vehicle ESP (auto-detects workspace.Vehicles)")
-print("- X-Ray with configurable keybind and transparency")
+print("- Vehicle ESP (auto-detects workspace.Vehicles) - Blue names")
+print("- X-Ray with configurable transparency")
 print("- Camera FOV slider")
 print("- Vehicle max distance slider")
-print("- Separate colors for Players and Vehicles")
-print("==========================================") 
+print("==========================================")
